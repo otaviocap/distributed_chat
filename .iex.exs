@@ -1,0 +1,1 @@
+alias Core.Server.ChatServer
