@@ -23,28 +23,48 @@ defmodule Core.Server.ChatServer do
     {:reply, state.known_users, state}
   end
 
-  def handle_call({:send_message, message}, _from, state = %State{}) do
-    Logger.info("#{state.user.username} (#{state.user.id}): #{message}")
+  def handle_call({:send_message, to, message}, _from, state = %State{}) do
+    if String.length(state.user.username) == 0 do
+      Logger.info("Before sending a message set an username")
+      {:reply, :invalid_name, state}
+    else
+      Logger.info("#{state.user.username} (#{state.user.id}): #{message}")
 
-    {:reply, nil, state}
+      GenServer.cast(
+        {__MODULE__, Map.get(state.known_users, to)},
+        {:recieve_message, %{from: state.user.username, id: state.user.id, message: message}}
+      )
+
+      {:reply, nil, state}
+    end
   end
 
   def handle_call({:set_username, username}, _from, state = %State{}) do
-    if Map.has_key?(state.known_users, username) do
-      Logger.info("Username #{username} already registered. Please choose another one.")
-      {:reply, nil, state}
-    else
-      Node.list()
-      |> Enum.each(
-        &GenServer.cast({__MODULE__, &1}, {:broadcast_username, Node.self(), username})
-      )
+    cond do
+      String.length(username) == 0 ->
+        {:reply, :invalid_name, state}
 
-      {:reply, nil, update_in(state.user, &%User{&1 | username: username})}
+      Map.has_key?(state.known_users, username) ->
+        Logger.info("Username #{username} already registered. Please choose another one.")
+        {:reply, :already_registered, state}
+
+      true ->
+        Node.list()
+        |> Enum.each(
+          &GenServer.cast({__MODULE__, &1}, {:broadcast_username, Node.self(), username})
+        )
+
+        {:reply, nil, update_in(state.user, &%User{&1 | username: username})}
     end
   end
 
   def handle_cast({:node_down, node}, state = %State{}) do
     state = remove_user_by_node(state, node)
+    {:noreply, state}
+  end
+
+  def handle_cast({:recieve_message, %{from: from, id: id, message: message}}, state = %State{}) do
+    Logger.info("#{from} (#{id}): #{message}")
     {:noreply, state}
   end
 
@@ -71,8 +91,8 @@ defmodule Core.Server.ChatServer do
     end
   end
 
-  def send_message(message) do
-    GenServer.call(__MODULE__, {:send_message, message})
+  def send_message(to, message) do
+    GenServer.call(__MODULE__, {:send_message, to, message})
   end
 
   def set_username(username) do
